@@ -61,6 +61,12 @@ async function downloadWithPuppeteer(page, link) {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
+    // Chờ 1 giây để JS trên trang load xong và không xóa ô input
+    // await page.waitForTimeout(1000);
+    await page.evaluate(() => {
+    const input = document.querySelector("input[name=url]");
+    if (input) input.value = "";
+  });
 
     // Nhập link video
     await page.type("input[name=url]", link);
@@ -94,26 +100,40 @@ async function downloadWithPuppeteer(page, link) {
     const filePath = path.join(folderName, `${fileName}.mp4`);
     const writer = fs.createWriteStream(filePath);
 
+    await downloadStream(videoRes.data, filePath, fileSize, fileName);
+    
+  } catch (err) {
+    console.error(`❌ Error with link: ${link} - ${err.message}`);
+    fs.appendFileSync("errors.txt", link + "\n");
+  }
+}
+
+function downloadStream(stream, filePath, fileSize, fileName) {
+  return new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(filePath);
     const progressBar = new cliProgress.SingleBar(
       { format: `[${fileName}] {bar} {percentage}% | {value}/{total} bytes` },
       cliProgress.Presets.shades_classic
     );
     progressBar.start(fileSize, 0);
 
-    videoRes.data.on("data", (chunk) => {
+    stream.on("data", (chunk) => {
       writer.write(chunk);
       progressBar.increment(chunk.length);
     });
 
-    videoRes.data.on("end", () => {
+    stream.on("end", () => {
       writer.end();
       progressBar.stop();
       console.log(`✅ Downloaded: ${filePath}`);
+      resolve();
     });
-  } catch (err) {
-    console.error(`❌ Error with link: ${link} - ${err.message}`);
-    fs.appendFileSync("errors.txt", link + "\n");
-  }
+
+    stream.on("error", (err) => {
+      progressBar.stop();
+      reject(err);
+    });
+  });
 }
 
 async function worker(links) {
