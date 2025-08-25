@@ -138,7 +138,7 @@ function downloadStream(stream, filePath, fileSize, fileName) {
 }
 
 async function worker(links) {
-  const browser = await puppeteer.launch({ headless: false });
+  const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
 
   for (const link of links) {
