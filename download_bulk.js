@@ -32,21 +32,19 @@ const argv = yargs
   })
   .help().argv;
 
-async function downloadWithPuppeteer(browser, link) {
-  const page = await browser.newPage();
-
+async function downloadWithPuppeteer(page, link) {
   try {
-    // B1: vào trang tmate.cc
+    // Vào lại trang chính (reset state)
     await page.goto("https://tmate.cc/", {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
 
-    // B2: nhập link video vào input
+    // Nhập link video
     await page.type("input[name=url]", link);
-    await page.click("button[type=submit]"); // nút download
+    await page.click("button[type=submit]");
 
-    // B3: chờ kết quả render ra link tải
+    // Chờ kết quả render ra
     await page.waitForSelector(".downtmate-right.is-desktop-only.right a", {
       timeout: 60000,
     });
@@ -56,21 +54,13 @@ async function downloadWithPuppeteer(browser, link) {
       (els) => els.map((a) => a.href)
     );
 
-    let downloadLink;
-    if (argv.watermark) {
-      downloadLink = anchors[3];
-    } else {
-      downloadLink = anchors[0];
-    }
-
+    let downloadLink = argv.watermark ? anchors[3] : anchors[0];
     if (!downloadLink) throw new Error("Không tìm thấy link tải");
 
-    // B4: tải video về bằng axios
-    const videoRes = await axios.get(downloadLink, {
-      responseType: "stream",
-    });
-
+    // Tải video bằng axios
+    const videoRes = await axios.get(downloadLink, { responseType: "stream" });
     const fileSize = parseInt(videoRes.headers["content-length"], 10);
+
     const fileName = link.split("/").pop();
     const folderName = link.split("/")[3]; // username
     await fs.ensureDir(folderName);
@@ -79,9 +69,7 @@ async function downloadWithPuppeteer(browser, link) {
     const writer = fs.createWriteStream(filePath);
 
     const progressBar = new cliProgress.SingleBar(
-      {
-        format: `[${fileName}] {bar} {percentage}% | {value}/{total} bytes`,
-      },
+      { format: `[${fileName}] {bar} {percentage}% | {value}/{total} bytes` },
       cliProgress.Presets.shades_classic
     );
     progressBar.start(fileSize, 0);
@@ -99,35 +87,31 @@ async function downloadWithPuppeteer(browser, link) {
   } catch (err) {
     console.error(`❌ Error with link: ${link} - ${err.message}`);
     fs.appendFileSync("errors.txt", link + "\n");
-  } finally {
-    await page.close();
   }
 }
 
 async function main() {
   const links = fs.readFileSync(argv.links, "utf-8").split("\n").filter(Boolean);
+  const browser = await puppeteer.launch({ headless: true });
 
-  const browser = await puppeteer.launch({
-    headless: true, // đổi thành false nếu muốn thấy browser
-  });
-
-  const queue = [...links];
-  let running = 0;
-
-  async function runNext() {
-    if (queue.length === 0) return;
-    if (running >= argv.workers) return;
-
-    const link = queue.shift();
-    running++;
-    await downloadWithPuppeteer(browser, link);
-    running--;
-    runNext();
-  }
-
+  // Tạo page cho từng worker
+  const pages = [];
   for (let i = 0; i < argv.workers; i++) {
-    runNext();
+    pages.push(await browser.newPage());
   }
+
+  let index = 0;
+
+  async function worker(page) {
+    while (index < links.length) {
+      const link = links[index++];
+      await downloadWithPuppeteer(page, link);
+    }
+  }
+
+  await Promise.all(pages.map((page) => worker(page)));
+
+  await browser.close();
 }
 
 main();
