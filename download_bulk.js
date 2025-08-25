@@ -32,9 +32,29 @@ const argv = yargs
   })
   .help().argv;
 
-async function downloadWithPuppeteer(page, link) {
+// Hàm xóa cookies, cache, storage
+async function clearPageData(page) {
+  const client = await page.target().createCDPSession();
+  await client.send('Network.clearBrowserCookies');
+  await client.send('Network.clearBrowserCache');
+
   try {
-    // Vào lại trang chính (reset state)
+    const url = page.url();
+    const { origin } = new URL(url);
+    await client.send('Storage.clearDataForOrigin', { origin, storageTypes: 'all' });
+  } catch (err) {
+    console.warn('Không thể clear storage trực tiếp:', err.message);
+  }
+}
+
+async function downloadWithPuppeteer(page, link) {
+  let downloadLink = null;
+
+  try {
+    // Xóa cookies/storage trước khi load link
+    await clearPageData(page);
+
+    // Vào lại trang chính
     await page.goto("https://tmate.cc/", {
       waitUntil: "domcontentloaded",
       timeout: 60000,
@@ -44,18 +64,22 @@ async function downloadWithPuppeteer(page, link) {
     await page.type("input[name=url]", link);
     await page.click("button[type=submit]");
 
-    // Chờ kết quả render ra
-    await page.waitForSelector(".downtmate-right.is-desktop-only.right a", {
-      timeout: 60000,
-    });
+    // Chờ render selector
+    try {
+      await page.waitForSelector(".downtmate-right.is-desktop-only.right a", { timeout: 20000 });
 
-    const anchors = await page.$$eval(
-      ".downtmate-right.is-desktop-only.right a",
-      (els) => els.map((a) => a.href)
-    );
+      if (!downloadLink) {
+        const anchors = await page.$$eval(
+          ".downtmate-right.is-desktop-only.right a",
+          (els) => els.map((a) => a.href)
+        );
+        downloadLink = argv.watermark ? anchors[3] : anchors[0];
+      }
+    } catch (err) {
+      if (!downloadLink) throw new Error("Không tìm thấy link tải");
+    }
 
-    let downloadLink = argv.watermark ? anchors[3] : anchors[0];
-    if (!downloadLink) throw new Error("Không tìm thấy link tải");
+    if (!downloadLink) throw new Error("Download link is null");
 
     // Tải video bằng axios
     const videoRes = await axios.get(downloadLink, { responseType: "stream" });
@@ -90,28 +114,29 @@ async function downloadWithPuppeteer(page, link) {
   }
 }
 
-async function main() {
-  const links = fs.readFileSync(argv.links, "utf-8").split("\n").filter(Boolean);
-  const browser = await puppeteer.launch({ headless: true });
+async function worker(links) {
+  const browser = await puppeteer.launch({ headless: false });
+  const page = await browser.newPage();
 
-  // Tạo page cho từng worker
-  const pages = [];
-  for (let i = 0; i < argv.workers; i++) {
-    pages.push(await browser.newPage());
+  for (const link of links) {
+    await downloadWithPuppeteer(page, link);
   }
-
-  let index = 0;
-
-  async function worker(page) {
-    while (index < links.length) {
-      const link = links[index++];
-      await downloadWithPuppeteer(page, link);
-    }
-  }
-
-  await Promise.all(pages.map((page) => worker(page)));
 
   await browser.close();
+}
+
+async function main() {
+  const links = fs.readFileSync(argv.links, "utf-8").split("\n").filter(Boolean);
+
+  // Chia đều links cho các worker
+  const chunkSize = Math.ceil(links.length / argv.workers);
+  const chunks = [];
+  for (let i = 0; i < links.length; i += chunkSize) {
+    chunks.push(links.slice(i, i + chunkSize));
+  }
+
+  // Mỗi worker chạy trên 1 browser riêng
+  await Promise.all(chunks.map((chunk) => worker(chunk)));
 }
 
 main();
