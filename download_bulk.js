@@ -67,6 +67,7 @@ async function downloadWithPuppeteer(page, link) {
     const input = document.querySelector("input[name=url]");
     if (input) input.value = "";
   });
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1000)));
 
     // Nhập link video
     await page.type("input[name=url]", link);
@@ -101,7 +102,7 @@ async function downloadWithPuppeteer(page, link) {
     const writer = fs.createWriteStream(filePath);
 
     await downloadStream(videoRes.data, filePath, fileSize, fileName);
-    
+
   } catch (err) {
     console.error(`❌ Error with link: ${link} - ${err.message}`);
     fs.appendFileSync("errors.txt", link + "\n");
