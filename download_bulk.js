@@ -5,8 +5,10 @@ const yargs = require("yargs");
 const puppeteer = require("puppeteer-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 const axios = require("axios");
+const AdblockerPlugin = require("puppeteer-extra-plugin-adblocker");
 
 puppeteer.use(StealthPlugin());
+puppeteer.use(AdblockerPlugin({ blockTrackers: true }));
 
 // CLI args
 const argv = yargs
@@ -137,6 +139,8 @@ async function main() {
 
   // Mỗi worker chạy trên 1 browser riêng
   await Promise.all(chunks.map((chunk) => worker(chunk)));
+  console.log("🎉 All downloads finished.");
+  process.exit(0); // Tự động thoát NodeJS
 }
 
 main();
